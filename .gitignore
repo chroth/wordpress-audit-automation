@@ -4,3 +4,4 @@ __pycache__
 plugins
 releases
 create_release.sh
+venv
