@@ -1,6 +1,7 @@
-import mysql.connector
+import sqlite3
 import configparser
 from datetime import datetime
+from dateutil.relativedelta import relativedelta
 
 
 def connect_to_db(create_schema=False):
@@ -12,27 +13,22 @@ def connect_to_db(create_schema=False):
     db_config = config["database"]
 
     # Connect to the database server (initially without specifying the database)
-    db_conn = mysql.connector.connect(
-        host=db_config["host"], user=db_config["user"], password=db_config["password"]
+    db_conn = sqlite3.connect(
+        db_config["database"]
     )
     cursor = db_conn.cursor()
     try:
         # If schema creation is requested, create the database and table if they don't exist
         if create_schema:
-            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {db_config['database']}")
-            db_conn.database = db_config["database"]
             create_plugin_data_table(cursor)
             create_plugin_results_table(cursor)
-        else:
-            db_conn.database = db_config["database"]
 
-    except mysql.connector.errors.ProgrammingError as e:
-        if "1049" in str(e):
-            raise SystemExit(
-                "Database {} does not exist. Please run with the '--create-schema' flag to create the database.".format(
-                    db_config["database"]
-                )
+    except sqlite3.DatabaseError as e:
+        raise SystemExit(
+            "Database {} does not exist. Please run with the '--create-schema' flag to create the database.".format(
+                db_config["database"]
             )
+        )
 
     return db_conn, cursor
 
@@ -79,14 +75,14 @@ def insert_plugin_into_db(cursor, plugin):
     # Prepare SQL upsert statement
     sql = """
     INSERT INTO PluginData (slug, version, active_installs, downloaded, last_updated, added_date, download_link)
-    VALUES (%s, %s, %s, %s, %s, %s, %s)
-    ON DUPLICATE KEY UPDATE
-        version = VALUES(version),
-        active_installs = VALUES(active_installs),
-        downloaded = VALUES(downloaded),
-        last_updated = VALUES(last_updated),
-        added_date = VALUES(added_date),
-        download_link = VALUES(download_link)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(slug) DO UPDATE SET
+        version = excluded.version,
+        active_installs = excluded.active_installs,
+        downloaded = excluded.downloaded,
+        last_updated = excluded.last_updated,
+        added_date = excluded.added_date,
+        download_link = excluded.download_link
     """
 
     # Prepare data for database insertion
@@ -113,17 +109,16 @@ def insert_plugin_into_db(cursor, plugin):
 
     try:
         cursor.execute(sql, data)
-    except mysql.connector.errors.ProgrammingError as e:
-        if "1146" in str(e):
-            raise SystemExit(
-                "Table does not exist. Please run with the '--create-schema' flag to create the table."
-            )
+    except sqlite3.ProgrammingError as e:
+        raise SystemExit(
+            "Table does not exist. Please run with the '--create-schema' flag to create the table."
+        )
 
 
 def insert_result_into_db(cursor, slug, result):
     sql = (
         "INSERT INTO PluginResults (slug, file_path, check_id, start_line, end_line, vuln_lines)"
-        "VALUES (%s, %s, %s, %s, %s, %s)"
+        "VALUES (?, ?, ?, ?, ?, ?)"
     )
     data = (
         slug,
@@ -136,8 +131,32 @@ def insert_result_into_db(cursor, slug, result):
     try:
         cursor.execute(sql, data)
 
-    except mysql.connector.errors.ProgrammingError as e:
-        if "1146" in str(e):
-            raise SystemExit(
-                "Table does not exist. Please run with the '--create-schema' flag to create the table."
-            )
+    except sqlite3.ProgrammingError as e:
+        raise SystemExit(
+            "Table does not exist. Please run with the '--create-schema' flag to create the table."
+        )
+
+def adapt_datetime_iso(val):
+    """Adapt datetime.datetime to timezone-naive ISO 8601 date."""
+    return val.isoformat()
+
+sqlite3.register_adapter(datetime, adapt_datetime_iso)
+
+def select_plugins_for_download(cursor, active_installs=0):
+    sql = (
+        "SELECT slug, download_link FROM PluginData "
+        "WHERE active_installs > ? AND last_updated >= ?"
+    )
+    two_years_ago = datetime.now() - relativedelta(years=2)
+    data = (
+        active_installs,
+        two_years_ago,
+    )
+    try:
+        cursor.execute(sql, data)
+        return cursor
+
+    except sqlite3.ProgrammingError as e:
+        raise SystemExit(
+            "Table does not exist. Please run with the '--create-schema' flag to create the table."
+        )

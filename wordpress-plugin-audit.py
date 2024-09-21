@@ -1,4 +1,5 @@
 import requests
+import asyncio
 import argparse
 import os
 import json
@@ -13,11 +14,12 @@ from dbutils import (
     delete_results_table,
     insert_result_into_db,
     insert_plugin_into_db,
+    select_plugins_for_download,
 )
 
 
 # Let's only retrieve 10 plugins per page so people feel like the status bar is actually moving
-def get_plugins(page=1, per_page=10):
+def get_plugins(page=1, per_page=100):
     url = f"https://api.wordpress.org/plugins/info/1.2/?action=query_plugins&request[page]={page}&request[per_page]={per_page}"
     response = requests.get(url)
 
@@ -28,7 +30,7 @@ def get_plugins(page=1, per_page=10):
         return None
 
 
-def write_plugins_to_csv_db_and_download(db_conn, cursor, download_dir, verbose=False):
+def write_plugins_to_db(db_conn, cursor, verbose=False):
 
     # Get the first page to find out the total number of pages
     data = get_plugins(page=1)
@@ -39,11 +41,8 @@ def write_plugins_to_csv_db_and_download(db_conn, cursor, download_dir, verbose=
 
     total_pages = data["info"]["pages"]
 
-    # Ensure the directory for plugins exists
-    os.makedirs(os.path.join(download_dir, "plugins"), exist_ok=True)
-
     # Iterate through the pages
-    for page in tqdm(range(1, total_pages + 1), desc="Downloading plugins"):
+    for page in tqdm(range(1, total_pages + 1), desc="Storing plugins metadata"):
         data = get_plugins(page=page)
 
         if not data or "plugins" not in data:
@@ -54,31 +53,43 @@ def write_plugins_to_csv_db_and_download(db_conn, cursor, download_dir, verbose=
 
             if verbose:
                 print(f"Inserted data for plugin {plugin['slug']}.")
-            # Download and extract the plugin
-            download_and_extract_plugin(plugin, download_dir, verbose)
+        db_conn.commit()
 
 
-def download_and_extract_plugin(plugin, download_dir, verbose):
-    slug = plugin["slug"]
-    download_link = plugin.get("download_link")
-    last_updated = plugin.get("last_updated")
+async def download_plugins_in_database(cursor, download_dir, active_installs, replace_downloads=False, verbose=False):
+    # Ensure the directory for plugins exists
+    os.makedirs(os.path.join(download_dir, "plugins"), exist_ok=True)
 
-    # Check if the plugin was last updated in the last 2 years, we'll only download the ones that actively maintained
-    try:
-        # Parse the date format 'YYYY-MM-DD HH:MMpm GMT'
-        last_updated_datetime = datetime.strptime(last_updated, "%Y-%m-%d %I:%M%p %Z")
-        last_updated_year = last_updated_datetime.year
-        if last_updated_year < (datetime.now().year - 2):
-            return
-    except ValueError:
-        print(f"Invalid date format for plugin {slug}: {last_updated}")
-        return
+    plugins = select_plugins_for_download(cursor, active_installs).fetchall()
+    ongoing = []
+    plugins_count = len(plugins)
+    print("Length: %s" % plugins_count)
+    pbar = tqdm(total=plugins_count)
+    for (slug, download_link) in plugins:
+        # Download and extract the plugin
+        ongoing.append(download_and_extract_plugin(slug, download_link, download_dir, replace_downloads, verbose))
+        
+        if len(ongoing) == 10:
+            await asyncio.gather(*ongoing)
+            ongoing = []
+            pbar.update(10)
 
+    if len(ongoing) > 0:
+        await asyncio.gather(*ongoing)
+        pbar.update(len(ongoing))
+    pbar.close()
+    
+
+async def download_and_extract_plugin(slug, download_link, download_dir, replace_downloads, verbose):
     # Download and extract the plugin
     plugin_path = os.path.join(download_dir, "plugins", slug)
 
     # Clear the directory if it exists
     if os.path.exists(plugin_path):
+        if not replace_downloads:
+            if verbose:
+                print(f"Plugin folder already exists, skipping plugin: {plugin_path}")
+            return
         if verbose:
             print(f"Plugin folder already exists, deleting folder: {plugin_path}")
         shutil.rmtree(plugin_path)
@@ -137,9 +148,25 @@ def run_semgrep_and_store_results(db_conn, cursor, download_dir, config, verbose
                 db_conn.commit()
 
 
-if __name__ == "__main__":
+async def main():
     parser = argparse.ArgumentParser(
         description="Downloads or audits all Wordpress plugins."
+    )
+    parser.add_argument(
+        "--active-installs",
+        type=int,
+        default=0,
+        help="Minimum amount of active installs to download",
+    )
+    parser.add_argument(
+        '--store-plugins',
+        action="store_true",
+        help="Fetch all plugins metadata and store in database",
+    )
+    parser.add_argument(
+        "--replace-downloads",
+        action="store_true",
+        help="Replace already downloaded plugins",
     )
     parser.add_argument(
         "--download",
@@ -180,8 +207,8 @@ if __name__ == "__main__":
     # Parse arguments
     args = parser.parse_args()
 
-    if not args.download and not args.audit:
-        print("Please set either the --download or --audit option.\n")
+    if not args.store_plugins and not args.download and not args.audit:
+        print("Please set either the --store-plugins, --download or --audit option.\n")
         parser.print_help()
 
     else:
@@ -191,9 +218,13 @@ if __name__ == "__main__":
             delete_results_table(cursor)
 
         # Write plugins to CSV, Database, and possibly download them
+        if args.store_plugins:
+            write_plugins_to_db(
+                db_conn, cursor, args.verbose
+            )
         if args.download:
-            write_plugins_to_csv_db_and_download(
-                db_conn, cursor, args.download_dir, args.verbose
+            await download_plugins_in_database(
+                cursor, args.download_dir, args.active_installs, args.replace_downloads, args.verbose
             )
         if args.audit:
             run_semgrep_and_store_results(
@@ -202,3 +233,6 @@ if __name__ == "__main__":
 
         cursor.close()
         db_conn.close()
+
+if __name__ == "__main__":
+    asyncio.run(main())
