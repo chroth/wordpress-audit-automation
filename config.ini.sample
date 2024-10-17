@@ -1,5 +1,7 @@
 [database]
-host = 127.0.0.1
-user = root
-password = password
-database = SemgrepResults
+plugin_database = ../data/wpplugins.db
+audit_database = ../data/audit.db
+
+[paths]
+plugin_path = ../plugins/
+semgrep_temp_path = /tmp/audit-db/

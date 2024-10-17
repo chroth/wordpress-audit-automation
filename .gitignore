@@ -6,3 +6,6 @@ releases
 create_release.sh
 venv
 *.db
+audit-db
+.vscode
+semgrep-rules

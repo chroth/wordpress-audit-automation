@@ -1,84 +1,202 @@
-# Wordpress Automated CVE Hunting
+# Wordpress Plugin Audit Automation
 
-Scripts to download every Wordpress plugin (updated in the last 2 years) and run Semgrep over the lot of it while storing output in a database.
+This project automates the process of downloading, auditing, and analyzing Wordpress plugins for vulnerabilities. It leverages Semgrep for static analysis and stores results in a database for further review.
 
-Full write-up: https://projectblack.io/blog/cve-hunting-at-scale/
+## Overview
 
-Want to skip straight to looking at the dataset? 
+The project has been significantly rewritten to streamline the workflow for my own usecase. It now includes:
 
-Download the latest mysqldump here: https://github.com/prjblk/wordpress-audit-automation/releases
+- Automated plugin metadata retrieval and database updates.
+- Plugin downloading and version tracking with Git.
+- Static analysis using Semgrep with customizable rules.
+- Flexible auditing workflows for pattern-based or rule-based scans.
+- Comprehensive database schema for tracking plugin metadata and audit results.
+
+## Features
+
+1. **Plugin Metadata Management**:
+
+   - Fetch plugin metadata from the Wordpress API.
+   - Store and update metadata in a database.
+   - Track plugin versions and download status.
+
+2. **Plugin Downloading**:
+
+   - Download and extract plugins based on metadata.
+   - Maintain version history using Git for each plugin.
+
+3. **Static Analysis**:
+
+   - Use Semgrep for rule-based vulnerability detection.
+   - Support for custom patterns and rules.
+
+4. **Auditing Workflows**:
+
+   - Audit plugins based on active installs and last update date.
+   - Flexible options for rule-based or pattern-based scans.
+
+5. **Database Integration**:
+   - SQLite database for storing plugin metadata and audit results.
+   - Schema creation and management included.
+
+## Audit Results Storage
+
+The results of Semgrep audits are now stored in a separate SQLite database (`wpplugins-audit.db`). Each finding includes details such as:
+
+- Plugin slug
+- Rule ID and name
+- Severity
+- File path and line numbers
+- Message
+
+To analyze the results, query the `AuditResults` table in the `wpplugins-audit.db` database.
+
+## Audit Metadata Tracking
+
+Each audit run is now tracked in the `AuditRuns` table in the `wpplugins-audit.db` database. This includes:
+
+- `plugin_slug`: The slug of the audited plugin.
+- `plugin_version`: The version of the plugin at the time of the audit.
+- `rule_id`: The Semgrep rule used for the audit.
+- `timestamp`: The date and time of the audit.
+
+Audit results are stored in the `AuditResults` table and linked to their corresponding run via the `run_id`. This ensures that the same rule is not re-run on the same plugin version.
 
 ## Getting Started
 
 ### Prerequisites
 
-* Ubuntu or other nix system
-* At least 30GB of disk space
-* MySQL database server
-* Python
-* Patience
+- Python 3.8+ and pip
+- SQLite3
+- Semgrep installed and configured
+- Bash shell (for audit scripts)
+- At least 30GB of disk space
 
-## Steps
-1. Setup a MySQL database server
-2. Clone this repo
-    ```
-    git clone https://github.com/prjblk/wordpress-audit-automation
-    ```
-3. Configure the config file with database credentials/details
-    ```
-    cp config.ini.sample config.ini
-    nano config.ini
-    ```
-4. Install Python dependencies + Semgrep
-    ```
-    pip install -r requirements.txt
-    ```
-6. You may have to login again to ensure Semgrep is available via path
-7. Setup the database schema manually (skip this step if providing privileged database credentials to the script)
-    * Create a database and run the SQL in create_plugin_data_table and create_plugin_results_table in dbutils.py
-8. Run the script with the --download --audit and --create-schema options
-    * You might want to run this in a tmux/screen session as it takes ages (15 hours?)
-    * By default all the rules in p/php are run against the plugins (minus the PRO rules unless you're logged in). https://semgrep.dev/p/php
-    * Would highly suggest looking at some of the other rules available as well
-9. Triage output
-10. ???
-11. CVEs
+### Installation
 
-### Example Usage
+1. Clone this repository:
 
-```
-$ python3 wordpress-plugin-audit.py -h
-usage: wordpress-plugin-audit.py [-h] [--download] [--download-dir DOWNLOAD_DIR] [--audit] [--config CONFIG] [--create-schema] [--clear-results] [--verbose]
+   ```
+   git clone https://github.com/chroth/wordpress-audit-automation
+   cd wordpress-audit-automation
+   ```
 
-Downloads or audits all Wordpress plugins.
+2. Install Python dependencies:
 
-options:
-  -h, --help            show this help message and exit
-  --download            Download and extract plugins, if plugin directory already exists, it will delete it and redownload
-  --download-dir DOWNLOAD_DIR
-                        The directory to save/audit downloaded plugins (default: current directory)
-  --audit               Audits downloaded plugins sequentially
-  --config CONFIG       Semgrep config/rules to run - https://semgrep.dev/docs/running-rules#running-semgrep-registry-rules-locally (default: p/php)
-  --create-schema       Create the database and schema if this flag is set
-  --clear-results       Clear audit table and then run, useful if run as a cron job and we only care about the latest release
-  --verbose             Print detailed messages
+   ```
+   pip install -r requirements.txt
+   ```
 
-$ python3 wordpress-plugin-audit.py --download --audit --create-schema
-Downloading plugins: 100%|███████████████████████████████████| 2/2 [00:49<00:00, 24.65s/it]
-Auditing plugins:  10%|█████                          | 2/20 [00:05<00:47,  2.62s/it]
-```
-#### Useful SQL Queries
+3. Install Semgrep:
 
-You can focus on a specific vulnerability class by querying for output relating to a specific rule.
+   ```
+   pip install semgrep
+   semgrep login  # Optional: Log in for PRO rules if you have a Semgrep account
+   ```
+
+4. Configure the application:
+   ```
+   cp config.ini.sample config.ini
+   vim config.ini
+   ```
+   Update the database path.
+
+### Usage
+
+#### Plugin Metadata Management
+
+Retrieve and store plugin metadata in the database:
 
 ```
-USE SemgrepResults;
-SELECT PluginResults.slug,PluginData.active_installs,PluginResults.file_path,PluginResults.start_line,PluginResults.vuln_lines 
-FROM PluginResults INNER JOIN PluginData ON PluginResults.slug = PluginData.slug 
-WHERE check_id = "php.lang.security.injection.tainted-sql-string.tainted-sql-string"
-ORDER BY active_installs DESC
+python3 plugin-update.py
 ```
+
+#### Plugin Downloading
+
+Download plugins based on metadata:
+
+```
+python3 plugin-download.py --download-dir /path/to/plugins
+```
+
+#### Static Analysis
+
+Run Semgrep audits using predefined rules:
+
+```
+python3 audit.py ---active-installs 1000 --path ../path/semgrep_rule.yaml
+```
+
+#### Pattern-Based Auditing
+
+Search for specific patterns in plugin code:
+
+```
+bash audit-pattern.sh -i 1000 -p '<iframe' -n iframe
+```
+
+#### Audit Status
+
+Check the progress of an audit:
+
+```
+python3 audit-status.py ---active-installs 1000 --semgrep-rule semgrep_rule
+```
+
+### Database Schema
+
+The database schema includes a `PluginData` table with the following fields:
+
+- `slug`: Unique identifier for the plugin.
+- `version`: Current version of the plugin.
+- `active_installs`: Number of active installs.
+- `downloaded`: Total downloads.
+- `last_updated`: Last update date.
+- `added_date`: Date the plugin was added to the database.
+- `download_link`: URL for downloading the plugin.
+- `has_downloaded`: Boolean indicating if the plugin has been downloaded.
+
+### Example Workflow
+
+1. Fetch plugin metadata:
+
+   ```
+   python3 plugin-update.py
+   ```
+
+2. Download plugins:
+
+   ```
+   python3 plugin-download.py --download-dir ./plugins
+   ```
+
+3. Run a Semgrep audit:
+
+   ```
+   bash audit.sh -i 1000 -p semgrep_rule.yaml
+   ```
+
+4. Check audit progress:
+
+   ```
+   bash audit-status.sh -i 1000 -r semgrep_rule
+   ```
+
+5. Analyze results in the database.
 
 ### Troubleshooting
 
-If you have problems with auditing plugins, ensure you can run semgrep at the command line normally first.
+- Ensure Semgrep is installed and accessible:
+  ```
+  semgrep --version
+  ```
+- Verify database credentials in `config.ini`.
+- Check for sufficient disk space before running the scripts.
+
+### Next Steps
+
+1. Review audit results in the database.
+2. Customize Semgrep rules for specific vulnerabilities.
+3. Report findings responsibly.
+
+This project is actively maintained and open to contributions. Feel free to submit issues or pull requests!
