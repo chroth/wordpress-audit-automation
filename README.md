@@ -4,7 +4,7 @@ This project automates the process of downloading, auditing, and analyzing Wordp
 
 ## Overview
 
-The project has been significantly rewritten to streamline the workflow for my own usecase. It now includes:
+The project has been significantly rewritten to streamline the workflow for my own use case. It now includes:
 
 - Automated plugin metadata retrieval and database updates.
 - Plugin downloading and version tracking with Git.
@@ -116,7 +116,7 @@ python3 plugin-update.py
 Download plugins based on metadata:
 
 ```
-python3 plugin-download.py --download-dir /path/to/plugins
+python3 plugin-download.py --active-installs 1000
 ```
 
 #### Static Analysis
@@ -124,23 +124,7 @@ python3 plugin-download.py --download-dir /path/to/plugins
 Run Semgrep audits using predefined rules:
 
 ```
-python3 audit.py ---active-installs 1000 --path ../path/semgrep_rule.yaml
-```
-
-#### Pattern-Based Auditing
-
-Search for specific patterns in plugin code:
-
-```
-bash audit-pattern.sh -i 1000 -p '<iframe' -n iframe
-```
-
-#### Audit Status
-
-Check the progress of an audit:
-
-```
-python3 audit-status.py ---active-installs 1000 --semgrep-rule semgrep_rule
+python3 audit.py --active-installs 1000 --semgrep-rule-path /path/to/semgrep_rule.yaml
 ```
 
 ### Database Schema
@@ -167,29 +151,19 @@ The database schema includes a `PluginData` table with the following fields:
 2. Download plugins:
 
    ```
-   python3 plugin-download.py --download-dir ./plugins
+   python3 plugin-download.py --active-installs 100000
    ```
 
 3. Run a Semgrep audit:
 
    ```
-   bash audit.sh -i 1000 -p semgrep_rule.yaml
+   python3 audit.py --active-installs 100000 --semgrep-rule-path /path/to/semgrep_rule.yaml
    ```
 
-4. Check audit progress:
-
-   ```
-   bash audit-status.sh -i 1000 -r semgrep_rule
-   ```
-
-5. Analyze results in the database.
+4. Analyze results in the database.
 
 ### Troubleshooting
 
-- Ensure Semgrep is installed and accessible:
-  ```
-  semgrep --version
-  ```
 - Verify database credentials in `config.ini`.
 - Check for sufficient disk space before running the scripts.
 

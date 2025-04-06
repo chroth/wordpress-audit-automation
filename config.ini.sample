@@ -1,7 +1,6 @@
 [database]
-plugin_database = ../data/wpplugins.db
-audit_database = ../data/audit.db
+plugin_database = ./data/wpplugins.db
+audit_database = ./data/audit.db
 
 [paths]
-plugin_path = ../plugins/
-semgrep_temp_path = /tmp/audit-db/
+plugin_path = ./plugins/
